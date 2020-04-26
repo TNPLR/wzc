@@ -9,15 +9,15 @@ FILE *dest;
 
 /* token */
 enum {
-		NUMBER = 0,
-		MUL,
-		DIV,
-		ADD,
-		MINUS,
-/*  5  */	L_PAR,
-		R_PAR,
-		END,
-		ID,
+		TK_NUMBER = 0,
+		TK_MUL,
+		TK_DIV,
+		TK_ADD,
+		TK_MINUS,
+/*  5  */	TK_L_PAR,
+		TK_R_PAR,
+		TK_EOF,
+		TK_ID,
 };
 int token;
 int token_len;
@@ -38,36 +38,36 @@ void next(void)
 		if (isdigit(c)) {
 			REV_SEEK(source);
 			token_len = getnum();
-			token = NUMBER;
+			token = TK_NUMBER;
 			return;
 		}
 		if (isalpha(c) || c == '_') {
-			token = ID;
+			token = TK_ID;
 			REV_SEEK(source);
 			return;
 		}
 		token_len = 1;
 		switch (c) {
 		case '+':
-			token = ADD;
+			token = TK_ADD;
 			return;
 		case '-':
-			token = MINUS;
+			token = TK_MINUS;
 			return;
 		case '*':
-			token = MUL;
+			token = TK_MUL;
 			return;
 		case '/':
-			token = DIV;
+			token = TK_DIV;
 			return;
 		case '(':
-			token = L_PAR;
+			token = TK_L_PAR;
 			return;
 		case ')':
-			token = R_PAR;
+			token = TK_R_PAR;
 			return;
 		case -1:
-			token = END;
+			token = TK_EOF;
 			return;
 		}
 	}
@@ -83,12 +83,12 @@ void num(void)
 void prim(void)
 {
 	switch (token) {
-	case L_PAR:
+	case TK_L_PAR:
 		next();
 		expr();
 		next();
 		break;
-	case NUMBER:
+	case TK_NUMBER:
 		num();
 		break;
 	default:
@@ -100,11 +100,11 @@ void prim(void)
 void unary(void)
 {
 	switch (token) {
-	case ADD:
+	case TK_ADD:
 		next();
 		unary();
 		break;
-	case MINUS:
+	case TK_MINUS:
 		next();
 		unary();
 		fprintf(dest, "\tnegq %%rax\n");
@@ -118,23 +118,22 @@ void unary(void)
 void mul_rest(void)
 {
 	switch (token) {
-	case MUL:
+	case TK_MUL:
 		next();
 		fprintf(dest, "\tpushq %%rax\n");
 		unary();
-		fprintf(dest, "\tmovq %%rax, %%rbx\n"
-			"\tpopq %%rax\n"
-			"\timulq %%rbx\n");
+		fprintf(dest, "\tpopq %%rdi\n"
+			"\timulq %%rdi, %%rax\n");
 		mul_rest();
 		break;
-	case DIV:
+	case TK_DIV:
 		next();
 		fprintf(dest, "\tpushq %%rax\n");
 		unary();
-		fprintf(dest, "\tmovq %%rax, %%rbx\n"
+		fprintf(dest, "\tmovq %%rax, %%rdi\n"
 			"\tpopq %%rax\n"
 			"\tcqo\n"
-			"\tidivq %%rbx\n");
+			"\tidivq %%rdi\n");
 		mul_rest();
 		break;
 	default:
@@ -149,20 +148,21 @@ void mul(void)
 void add_rest(void)
 {
 	switch (token) {
-	case ADD:
+	case TK_ADD:
 		next();
 		fprintf(dest, "\tpushq %%rax\n");
 		mul();
-		fprintf(dest, "\tpopq %%rbx\n"
-				"\taddq %%rbx, %%rax\n");
+		fprintf(dest, "\tpopq %%rdi\n"
+				"\taddq %%rdi, %%rax\n");
 		add_rest();
 		break;
-	case MINUS:
+	case TK_MINUS:
 		next();
 		fprintf(dest, "\tpushq %%rax\n");
 		mul();
-		fprintf(dest, "\tpopq %%rbx\n"
-				"\tsubq %%rbx, %%rax\n");
+		fprintf(dest, "\tmovq %%rax, %%rdi\n"
+				"\tpopq %%rax\n"
+				"\tsubq %%rdi, %%rax\n");
 		add_rest();
 		break;
 	default:
