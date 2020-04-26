@@ -1,3 +1,5 @@
+#include "ast.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <ctype.h>
@@ -18,6 +20,7 @@ enum {
 		TK_R_PAR,
 		TK_EOF,
 		TK_ID,
+		TK_SEMI
 };
 int token;
 int token_len;
@@ -66,6 +69,9 @@ void next(void)
 		case ')':
 			token = TK_R_PAR;
 			return;
+		case ';':
+			token = TK_SEMI;
+			return;
 		case -1:
 			token = TK_EOF;
 			return;
@@ -73,131 +79,218 @@ void next(void)
 	}
 }
 
-void expr(void);
-void num(void)
+void match_and_pop(int c)
 {
-	fprintf(dest, "\tmovq $%lu, %%rax\n" , token_data.integer);
+	if (token != c) {
+		printf("Expected %c, but found %c\n", c, token);
+		exit(1);
+	}
 	next();
 }
 
-void prim(void)
+ANode *num(void)
 {
+	ANode *node;
+	node = new_anode(AS_NUM, 0);
+	node->data.u64 = token_data.integer;
+	next();
+	return node;
+}
+
+ANode *expr(void);
+ANode *prim(void)
+{
+	ANode *node;
 	switch (token) {
 	case TK_L_PAR:
 		next();
-		expr();
+		node = new_anode(AS_NOP_PRIM, 1, expr());
 		next();
 		break;
 	case TK_NUMBER:
-		num();
+		node = new_anode(AS_NOP_PRIM, 1, num());
 		break;
 	default:
 		puts("Primary expression error");
 		exit(1);
 	}
+	return node;
 }
 
-void unary(void)
+ANode *unary(void)
 {
+	ANode *node;
 	switch (token) {
 	case TK_ADD:
 		next();
-		unary();
+		node = new_anode(AS_POS, 1, unary());
 		break;
 	case TK_MINUS:
 		next();
-		unary();
-		fprintf(dest, "\tnegq %%rax\n");
+		node = new_anode(AS_NEG, 1, unary());
 		break;
 	default:
-		prim();
+		node = new_anode(AS_NOP_UNARY, 1, prim());
 		break;
 	}
+	return node;
 }
 
-void mul_rest(void)
+ANode *mul_rest(ANode *lop)
 {
+	ANode *node;
 	switch (token) {
 	case TK_MUL:
 		next();
-		fprintf(dest, "\tpushq %%rax\n");
-		unary();
-		fprintf(dest, "\tpopq %%rdi\n"
-			"\timulq %%rdi, %%rax\n");
-		mul_rest();
+		node = new_anode(AS_MUL, 2, lop, unary());
+		node = mul_rest(node);
 		break;
 	case TK_DIV:
 		next();
-		fprintf(dest, "\tpushq %%rax\n");
-		unary();
-		fprintf(dest, "\tmovq %%rax, %%rdi\n"
-			"\tpopq %%rax\n"
-			"\tcqo\n"
-			"\tidivq %%rdi\n");
-		mul_rest();
+		node = new_anode(AS_DIV, 2, lop, unary());
+		node = mul_rest(node);
 		break;
 	default:
+		node = new_anode(AS_NOP_MUL, 1, lop);
 		break;
 	}
+	return node;
 }
-void mul(void)
+ANode *mul(void)
 {
-	unary();
-	mul_rest();
+	return mul_rest(unary());
 }
-void add_rest(void)
+ANode *add_rest(ANode *lop)
 {
+	ANode *node;
 	switch (token) {
 	case TK_ADD:
 		next();
-		fprintf(dest, "\tpushq %%rax\n");
-		mul();
-		fprintf(dest, "\tpopq %%rdi\n"
-				"\taddq %%rdi, %%rax\n");
-		add_rest();
+		node = new_anode(AS_ADD, 2, lop, mul());
+		node = add_rest(node);
 		break;
 	case TK_MINUS:
 		next();
-		fprintf(dest, "\tpushq %%rax\n");
-		mul();
-		fprintf(dest, "\tmovq %%rax, %%rdi\n"
-				"\tpopq %%rax\n"
-				"\tsubq %%rdi, %%rax\n");
-		add_rest();
+		node = new_anode(AS_SUB, 2, lop, mul());
+		node = add_rest(node);
 		break;
 	default:
+		node = new_anode(AS_NOP_ADD, 1, lop);
 		break;
 	}
+	return node;
 }
-void add(void)
+ANode *add(void)
 {
-	mul();
-	add_rest();
+	return add_rest(mul());
 }
-void expr(void)
+ANode *expr(void)
 {
-	add();
+	ANode *node;
+	node = new_anode(AS_NOP_EXPR, 1, add());
+	return node;
 }
-void expr_stat(void)
+ANode *expr_stat(void)
 {
-	expr();
+	ANode *node;
+	node = new_anode(AS_STAT_EXPR, 1, expr());
+	match_and_pop(TK_SEMI);
+	return node;
 }
-void ret(void)
+ANode *ret(void)
 {
-	expr_stat();
-	fprintf(dest, "\tpopq %%rbp\n"
-		"\tret\n");
+	ANode *node;
+	node = new_anode(AS_STAT_RETURN, 1, expr_stat());
+	return node;
 
+}
+
+void gen(ANode *node)
+{
+	if (node == (void *)0) {
+		return;
+	}
+	switch (node->type) {
+	case AS_NUM:
+		fprintf(dest, "\tmovq $%lu, %%rax\n" , node->data.u64);
+		break;
+	case AS_ADD:
+		gen(*node->Node->data(node->Node, 1));
+		fprintf(dest, "\tpushq %%rax\n");
+		gen(*node->Node->data(node->Node, 0));
+		fprintf(dest, "\taddq (%%rsp), %%rax\n");
+		fprintf(dest, "\tleaq 8(%%rsp), %%rsp\n");
+		break;
+	case AS_SUB:
+		gen(*node->Node->data(node->Node, 1));
+		fprintf(dest, "\tpushq %%rax\n");
+		gen(*node->Node->data(node->Node, 0));
+		fprintf(dest, "\tsubq (%%rsp), %%rax\n");
+		fprintf(dest, "\tleaq 8(%%rsp), %%rsp\n");
+		break;
+	case AS_MUL:
+		gen(*node->Node->data(node->Node, 1));
+		fprintf(dest, "\tpushq %%rax\n");
+		gen(*node->Node->data(node->Node, 0));
+		fprintf(dest, "\timulq (%%rsp), %%rax\n");
+		fprintf(dest, "\tleaq 8(%%rsp), %%rsp\n");
+		break;
+	case AS_DIV:
+		gen(*node->Node->data(node->Node, 1));
+		fprintf(dest, "\tpushq %%rax\n");
+		gen(*node->Node->data(node->Node, 0));
+		fprintf(dest, "\tcqo\n");
+		fprintf(dest, "\tidivq (%%rsp)\n");
+		fprintf(dest, "\tleaq +8(%%rsp), %%rsp\n");
+		break;
+	case AS_NEG:
+		gen(*node->Node->data(node->Node, 0));
+		fprintf(dest, "\tnegq %%rax\n");
+		break;
+	case AS_POS:
+		gen(*node->Node->data(node->Node, 0));
+		break;
+	case AS_NOP_PRIM:
+		gen(*node->Node->data(node->Node, 0));
+		break;
+	case AS_NOP_UNARY:
+		gen(*node->Node->data(node->Node, 0));
+		break;
+	case AS_NOP_MUL:
+		gen(*node->Node->data(node->Node, 0));
+		break;
+	case AS_NOP_ADD:
+		gen(*node->Node->data(node->Node, 0));
+		break;
+	case AS_NOP_EXPR:
+		gen(*node->Node->data(node->Node, 0));
+		break;
+	case AS_STAT_EXPR:
+		gen(*node->Node->data(node->Node, 0));
+		break;
+	case AS_STAT_RETURN:
+		gen(*node->Node->data(node->Node, 0));
+		fprintf(dest, "\tpopq %%rbp\n"
+			"\tret\n");
+		break;
+	default:
+		printf("Unknown Ast Node\n");
+		exit(1);
+	}
+	return;
 }
 void cc(void)
 {
+	ANode *res;
+	next();
+	res = ret();
 	fprintf(dest, ".text\n"
 		".globl main\n"
 		"main:\n"
 		"\tpushq %%rbp\n"
 		"\tmovq %%rsp, %%rbp\n");
-	next();
-	ret();
+	gen(res);
+	as_free_subtree(res);
 }
 
 int main(int argc, char *argv[])

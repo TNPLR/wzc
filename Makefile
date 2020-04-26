@@ -1,14 +1,11 @@
 CC=gcc
-CFLAGS=-std=c90 -Wall -Wextra
+CFLAGS=-std=c90 -pedantic -Wall -Wextra -ggdb
 
-.PHONY: clean all
+.PHONY: all clean
 all: wzc
-wzc: wzc.o
+wzc: wzc.o ast.o vector.o
 	${CC} ${CFLAGS} $^ -o $@
 %.o: %.c
-	${CC} ${CFLAGS} -c $^ -o $@
-test: wzc
-	./wzc test.c
-	${CC} ${CFLAGS} out.s
+	${CC} ${CFLAGS} $^ -c -o $@
 clean:
-	rm -f wzc a.out out.s *.o
+	rm -f *.o wzc out.s a.out
