@@ -5,6 +5,7 @@
 #include <string.h>
 #include <ctype.h>
 
+#define Assert(x) do { if (!(x)) { perror(#x); exit(1); } } while (0)
 #define REV_SEEK(x) fseek(x, -1, SEEK_CUR)
 
 FILE *source;
@@ -24,7 +25,9 @@ enum {
 		TK_SEMI,
 /* 10 */	TK_AUTO,
 		TK_RETURN,
-		TK_ASSIGN
+		TK_ASSIGN,
+		TK_L_CURLY,
+		TK_R_CURLY
 };
 int token;
 int token_len;
@@ -83,6 +86,9 @@ void check_local(char *str, unsigned long int len)
 	}
 	it->free(it);
 	res = malloc(sizeof(struct local_var));
+
+	Assert(res != (void *)0);
+
 	res->name = malloc(len + 1);
 	memcpy(res->name, str, len);
 	res->name[len] = 0;
@@ -96,7 +102,10 @@ void get_alpha(void)
 {
 	unsigned long int i;
 	int c;
+
 	char *str = malloc(4096);
+	Assert(str != (void *)0);
+
 	for (i = 0; (c = fgetc(source)); ++i) {
 		if (isalpha(c) || c == '_') {
 			str[i] = c;
@@ -155,6 +164,12 @@ void next(void)
 		case '=':
 			token = TK_ASSIGN;
 			return;
+		case '{':
+			token = TK_L_CURLY;
+			return;
+		case '}':
+			token = TK_R_CURLY;
+			return;
 		case -1:
 			token = TK_EOF;
 			return;
@@ -172,6 +187,13 @@ void match_and_pop(int c)
 }
 
 /* EBNF of the WZC Language (simplified C)
+ * compound_statement:
+ * '{' declaration_list? statement_list? '}'
+ * declaration_list:
+ *	declaration
+ *	declaration_list declaration
+ * declaration:
+ *	'auto' identifier ';'
  * statement_list:
  * 	statement
  *	statement_list statement
@@ -208,6 +230,9 @@ void match_and_pop(int c)
 ANode *num(void)
 {
 	ANode *node;
+	if (token != TK_NUMBER) {
+		match_and_pop(TK_NUMBER);
+	}
 	node = new_anode(AS_NUM, 0);
 	node->data.u64 = token_data.integer;
 	next();
@@ -217,6 +242,9 @@ ANode *num(void)
 ANode *ident(void)
 {
 	ANode *node;
+	if (token != TK_ID) {
+		match_and_pop(TK_ID);
+	}
 	node = new_anode(AS_ID, 0);
 	node->data.u64 = token_data.local_id->number;
 	next();
@@ -370,7 +398,7 @@ ANode *state_list_rest(ANode *lop)
 {
 	ANode *node;
 	switch (token) {
-	case TK_EOF:
+	case TK_R_CURLY:
 		node = new_anode(AS_STAT_LIST1, 1, lop);
 		break;
 	default:
@@ -384,6 +412,54 @@ ANode *state_list_rest(ANode *lop)
 ANode *state_list(void)
 {
 	return state_list_rest(state());
+}
+
+ANode *declaration(void)
+{
+	ANode *node;
+	match_and_pop(TK_AUTO);
+	node = new_anode(AS_DECLARATION, 1, ident());
+	match_and_pop(TK_SEMI);
+	return node;
+}
+
+ANode *declaration_list_rest(ANode *lop)
+{
+	ANode *node;
+	switch (token) {
+	case TK_AUTO:
+		node = new_anode(AS_DECLARATION_LIST2, 2, lop, declaration());
+		node = declaration_list_rest(node);
+		break;
+	default:
+		node = new_anode(AS_DECLARATION_LIST1, 1, lop);
+		break;
+	}
+	return node;
+}
+
+ANode *declaration_list(void)
+{
+	return declaration_list_rest(declaration());
+}
+
+ANode *compound_statement(void)
+{
+	ANode *node;
+	ANode *node1;
+	ANode *node2;
+	node1 = (void *)0;
+	node2 = (void *)0;
+	match_and_pop(TK_L_CURLY);
+	if (token == TK_AUTO) {
+		node1 = declaration_list();
+	}
+	if (token != TK_R_CURLY) {
+		node2 = state_list();
+	}
+	match_and_pop(TK_R_CURLY);
+	node = new_anode(AS_STAT_COMPOUND, 2, node1, node2);
+	return node;
 }
 
 struct lvar {
@@ -423,6 +499,70 @@ unsigned long int gen_ref(ANode *node)
 		exit(1);
 	}
 	return offset;
+}
+
+unsigned long int get_maxoffset(void)
+{
+	Iterator it;
+	struct lvar *res;
+	unsigned long int max_offset;
+	max_offset = 8;
+	for (it = variable->rbegin(variable); it->freelt(it, variable->rend(variable)); it->next(it)) {
+		res = (struct lvar *)it->get(it);
+		max_offset = (res->offset + 8) > max_offset ? (res->offset + 8) : max_offset;
+	}
+	it->free(it);
+	return max_offset;
+}
+
+void declare(ANode *node)
+{
+	Iterator it;
+	struct lvar *res;
+	unsigned long int max_offset;
+	max_offset = 8;
+	for (it = variable->rbegin(variable); it->freelt(it, variable->rend(variable)); it->next(it)) {
+		res = (struct lvar *)it->get(it);
+		if (node->data.u64 == res->number) {
+			it->free(it);
+			puts("Cannot redefine a variable with the same name");
+			exit(1);
+		}
+		max_offset = (res->offset + 8) > max_offset ? (res->offset + 8) : max_offset;
+	}
+	it->free(it);
+	res = (struct lvar *)malloc(sizeof(struct lvar));
+	Assert(res != (void *)0);
+
+	res->number = node->data.u64;
+	res->offset = max_offset;
+
+	variable->push_back(variable, res);
+}
+
+void gen_decl(ANode *node)
+{
+	if (node == (void *)0) {
+		return;
+	}
+	switch (node->type) {
+	case AS_DECLARATION_LIST1:
+		gen_decl(*node->Node->data(node->Node, 0));
+		break;
+	case AS_DECLARATION_LIST2:
+		gen_decl(*node->Node->data(node->Node, 0));
+		gen_decl(*node->Node->data(node->Node, 1));
+		break;
+	case AS_DECLARATION:
+		gen_decl(*node->Node->data(node->Node, 0));
+		break;
+	case AS_ID:
+		declare(node);
+		break;
+	default:
+		puts("declaration error");
+		exit(1);
+	}
 }
 
 void gen(ANode *node)
@@ -489,14 +629,23 @@ void gen(ANode *node)
 		gen(*node->Node->data(node->Node, 1));
 		break;
 	case AS_ID:
-		fprintf(dest, "\tmovq -%lu(%%rbp), %%rax\n", node->data.u64 * 8);
+		fprintf(dest, "\tmovq -%lu(%%rbp), %%rax\n", get_offset(node));
 		break;
 	case AS_ASSIGN:
-		gen(*node->Node->data(node->Node, 1));
-		fprintf(dest, "\tpushq %%rax\n");
 		gen_ref(*node->Node->data(node->Node, 0));
-		fprintf(dest, "\tmovq (%%rsp), (%%rax)\n"
-				"\tleaq 8(%%rsp), %%rsp\n");
+		fprintf(dest, "\tpushq %%rax\n");
+		gen(*node->Node->data(node->Node, 1));
+		fprintf(dest, "\tpopq %%rdi\n"
+				"\tmovq %%rax, (%%rdi)\n");
+		break;
+	case AS_DECLARATION_LIST1:
+	case AS_DECLARATION_LIST2:
+		gen_decl(node);
+		fprintf(dest, "\tleaq -%lu(%%rsp), %%rsp\n", get_maxoffset());
+		break;
+	case AS_STAT_COMPOUND:
+		gen(*node->Node->data(node->Node, 0));
+		gen(*node->Node->data(node->Node, 1));
 		break;
 	default:
 		printf("Unknown Ast Node\n");
@@ -510,7 +659,7 @@ void cc(void)
 	g_local_var = coonew(Vector);
 	variable = coonew(Vector);
 	next();
-	res = state_list();
+	res = compound_statement();
 	fprintf(dest, ".text\n"
 		".globl main\n"
 		"main:\n"
