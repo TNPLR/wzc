@@ -187,6 +187,8 @@ void match_and_pop(int c)
 }
 
 /* EBNF of the WZC Language (simplified C)
+ * function_definition:
+ * identifier '(' ')' compound_statement
  * compound_statement:
  * '{' declaration_list? statement_list? '}'
  * declaration_list:
@@ -462,6 +464,16 @@ ANode *compound_statement(void)
 	return node;
 }
 
+ANode *function_definition(void)
+{
+	ANode *node;
+	node = ident();
+	match_and_pop(TK_L_PAR);
+	match_and_pop(TK_R_PAR);
+	node = new_anode(AS_FUNCTION_DEFI, 2, node, compound_statement());
+	return node;
+}
+
 struct lvar {
 	unsigned long int number;
 	unsigned long int offset;
@@ -565,6 +577,29 @@ void gen_decl(ANode *node)
 	}
 }
 
+void gen(ANode *node);
+void gen_func(ANode *node)
+{
+	if (node == (void *)0) {
+		return;
+	}
+	switch (node->type) {
+	case AS_ID:
+		fprintf(dest, ".globl %s\n%s:\n", ((struct local_var *)*g_local_var->data(g_local_var, node->data.u64))->name, ((struct local_var *)*g_local_var->data(g_local_var, node->data.u64))->name);
+		break;
+	case AS_STAT_COMPOUND:
+		fprintf(dest, "\tpushq %%rbp\n"
+				"\tmovq %%rsp, %%rbp\n");
+		gen(node);
+		fprintf(dest, "\tleave\n"
+			"\tret\n");
+		break;
+	default:
+		puts("Unknown ast in function definition");
+		exit(1);
+	}
+}
+
 void gen(ANode *node)
 {
 	if (node == (void *)0) {
@@ -647,6 +682,10 @@ void gen(ANode *node)
 		gen(*node->Node->data(node->Node, 0));
 		gen(*node->Node->data(node->Node, 1));
 		break;
+	case AS_FUNCTION_DEFI:
+		gen_func(*node->Node->data(node->Node, 0));
+		gen_func(*node->Node->data(node->Node, 1));
+		break;
 	default:
 		printf("Unknown Ast Node\n");
 		exit(1);
@@ -659,12 +698,8 @@ void cc(void)
 	g_local_var = coonew(Vector);
 	variable = coonew(Vector);
 	next();
-	res = compound_statement();
-	fprintf(dest, ".text\n"
-		".globl main\n"
-		"main:\n"
-		"\tpushq %%rbp\n"
-		"\tmovq %%rsp, %%rbp\n");
+	res = function_definition();
+	fprintf(dest, ".text\n");
 	gen(res);
 	as_free_subtree(res);
 }

@@ -1,3 +1,4 @@
+main ()
 {
 	auto a;
 	auto b;
