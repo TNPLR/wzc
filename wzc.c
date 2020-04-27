@@ -183,8 +183,10 @@ void match_and_pop(int c)
  * return_statement
  *	'return' expression? ';'
  * expression:
+ *	assignment
+ * assignment:
  *	addicitive
- *	unary '=' expression
+ *	addicitive '=' assignment
  * addictive:
  *	multiplication
  *	addictive '+' multiplication
@@ -228,14 +230,14 @@ ANode *prim(void)
 	switch (token) {
 	case TK_L_PAR:
 		next();
-		node = new_anode(AS_NOP_PRIM, 1, expr());
+		node = expr();
 		next();
 		break;
 	case TK_NUMBER:
-		node = new_anode(AS_NOP_PRIM, 1, num());
+		node = num();
 		break;
 	case TK_ID:
-		node = new_anode(AS_NOP_PRIM, 1, ident());
+		node = ident();
 		break;
 	default:
 		puts("Primary expression error");
@@ -257,7 +259,7 @@ ANode *unary(void)
 		node = new_anode(AS_NEG, 1, unary());
 		break;
 	default:
-		node = new_anode(AS_NOP_UNARY, 1, prim());
+		node = prim();
 		break;
 	}
 	return node;
@@ -278,7 +280,7 @@ ANode *mul_rest(ANode *lop)
 		node = mul_rest(node);
 		break;
 	default:
-		node = new_anode(AS_NOP_MUL, 1, lop);
+		node = lop;
 		break;
 	}
 	return node;
@@ -302,7 +304,7 @@ ANode *add_rest(ANode *lop)
 		node = add_rest(node);
 		break;
 	default:
-		node = new_anode(AS_NOP_ADD, 1, lop);
+		node = lop;
 		break;
 	}
 	return node;
@@ -312,17 +314,16 @@ ANode *add(void)
 	return add_rest(mul());
 }
 
-ANode *expr_rest(ANode *lop)
+ANode *assign(void)
 {
 	ANode *node;
+	node = add();
 	switch (token) {
 	case TK_ASSIGN:
 		next();
-		node = new_anode(AS_ASSIGN, 2, lop, add());
-		node = expr_rest(node);
+		node = new_anode(AS_ASSIGN, 2, node, assign());
 		break;
 	default:
-		node = new_anode(AS_NOP_ASSIGN, 1, lop);
 		break;
 	}
 	return node;
@@ -330,8 +331,9 @@ ANode *expr_rest(ANode *lop)
 
 ANode *expr(void)
 {
-	return expr_rest(add());
+	return assign();
 }
+
 ANode *expr_stat(void)
 {
 	ANode *node;
@@ -384,6 +386,45 @@ ANode *state_list(void)
 	return state_list_rest(state());
 }
 
+struct lvar {
+	unsigned long int number;
+	unsigned long int offset;
+};
+
+Vector variable;
+unsigned long int get_offset(ANode *node)
+{
+	Iterator it;
+	struct lvar *res;
+	for (it = variable->rbegin(variable); it->freelt(it, variable->rend(variable)); it->next(it)) {
+		res = (struct lvar *)it->get(it);
+		if (node->data.u64 == res->number) {
+			it->free(it);
+			return res->offset;
+		}
+	}
+	puts("Variable not declared");
+	exit(1);
+}
+
+unsigned long int gen_ref(ANode *node)
+{
+	unsigned long int offset;
+	if (node == (void *)0) {
+		return 0;
+	}
+	switch (node->type) {
+	case AS_ID:
+		offset = get_offset(node);
+		fprintf(dest, "\tleaq -%lu(%%rbp), %%rax\n", offset);
+		break;
+	default:
+		puts("Left value not found");
+		exit(1);
+	}
+	return offset;
+}
+
 void gen(ANode *node)
 {
 	if (node == (void *)0) {
@@ -429,27 +470,12 @@ void gen(ANode *node)
 	case AS_POS:
 		gen(*node->Node->data(node->Node, 0));
 		break;
-	case AS_NOP_PRIM:
-		gen(*node->Node->data(node->Node, 0));
-		break;
-	case AS_NOP_UNARY:
-		gen(*node->Node->data(node->Node, 0));
-		break;
-	case AS_NOP_MUL:
-		gen(*node->Node->data(node->Node, 0));
-		break;
-	case AS_NOP_ADD:
-		gen(*node->Node->data(node->Node, 0));
-		break;
-	case AS_NOP_EXPR:
-		gen(*node->Node->data(node->Node, 0));
-		break;
 	case AS_STAT_EXPR:
 		gen(*node->Node->data(node->Node, 0));
 		break;
 	case AS_STAT_RETURN:
 		gen(*node->Node->data(node->Node, 0));
-		fprintf(dest, "\tpopq %%rbp\n"
+		fprintf(dest, "\tleave\n"
 			"\tret\n");
 		break;
 	case AS_STAT:
@@ -465,6 +491,13 @@ void gen(ANode *node)
 	case AS_ID:
 		fprintf(dest, "\tmovq -%lu(%%rbp), %%rax\n", node->data.u64 * 8);
 		break;
+	case AS_ASSIGN:
+		gen(*node->Node->data(node->Node, 1));
+		fprintf(dest, "\tpushq %%rax\n");
+		gen_ref(*node->Node->data(node->Node, 0));
+		fprintf(dest, "\tmovq (%%rsp), (%%rax)\n"
+				"\tleaq 8(%%rsp), %%rsp\n");
+		break;
 	default:
 		printf("Unknown Ast Node\n");
 		exit(1);
@@ -475,6 +508,7 @@ void cc(void)
 {
 	ANode *res;
 	g_local_var = coonew(Vector);
+	variable = coonew(Vector);
 	next();
 	res = state_list();
 	fprintf(dest, ".text\n"

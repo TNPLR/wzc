@@ -11,19 +11,13 @@ enum ast_type {
 	AS_DIV,
 	AS_NEG,
 	AS_POS,
-	AS_NOP_PRIM,
-	AS_NOP_UNARY,
-	AS_NOP_MUL,
-	AS_NOP_ADD,
-	AS_NOP_EXPR,
 	AS_STAT_EXPR,
 	AS_STAT_RETURN,
 	AS_STAT,
 	AS_STAT_LIST1,
 	AS_STAT_LIST2,
 	AS_ID,
-	AS_ASSIGN,
-	AS_NOP_ASSIGN
+	AS_ASSIGN
 };
 
 typedef struct ast_node ANode;
