@@ -30,7 +30,7 @@ void as_free_subtree(ANode *node)
 		return;
 	}
 	for (it = node->Node->begin(node->Node); it->freelt(it, node->Node->end(node->Node)); it->next(it)) {
-		as_free_subtree(it->get(it));
+		as_free_subtree((ANode *)it->get(it));
 	}
 	it->free(it);
 	node->Node->free(node->Node);

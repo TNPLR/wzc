@@ -32,16 +32,16 @@ enum {
 int token;
 int token_len;
 union {
-	struct local_var *local_id;
+	struct idname *local_id;
 	unsigned long int integer;
 } token_data;
 
-struct local_var {
+struct idname {
 	char *name;
 	unsigned long int name_len;
 	unsigned long int number;
 };
-Vector g_local_var;
+Vector g_idname;
 
 int getnum(void)
 {
@@ -72,29 +72,31 @@ int check_keyword(char *str, unsigned long int len)
 void check_local(char *str, unsigned long int len)
 {
 	Iterator it;
-	struct local_var *res;
+	struct idname *res;
 	token = TK_ID;
-	for (it = g_local_var->rbegin(g_local_var); it->freelt(it, g_local_var->rend(g_local_var)); it->next(it)) {
-		if (((struct local_var *)it->get(it))->name_len != len) {
+	for (it = g_idname->rbegin(g_idname); it->freelt(it, g_idname->rend(g_idname)); it->next(it)) {
+		if (((struct idname *)it->get(it))->name_len != len) {
 			continue;
 		}
-		if (memcmp(((struct local_var *)it->get(it))->name, str, len)) {
+		if (memcmp(((struct idname *)it->get(it))->name, str, len)) {
 			continue;
 		}
-		token_data.local_id = (struct local_var *)it->get(it);
+		token_data.local_id = (struct idname *)it->get(it);
 		return;
 	}
 	it->free(it);
-	res = malloc(sizeof(struct local_var));
 
+	res = (struct idname *)malloc(sizeof(struct idname));
 	Assert(res != (void *)0);
 
-	res->name = malloc(len + 1);
+	res->name = (char *)malloc(len + 1);
+	Assert(res->name != (void *)0);
+
 	memcpy(res->name, str, len);
 	res->name[len] = 0;
 	res->name_len = len;
-	res->number = g_local_var->size(g_local_var);
-	g_local_var->push_back(g_local_var, res);
+	res->number = g_idname->size(g_idname);
+	g_idname->push_back(g_idname, res);
 	token_data.local_id = res;
 }
 
@@ -103,7 +105,7 @@ void get_alpha(void)
 	unsigned long int i;
 	int c;
 
-	char *str = malloc(4096);
+	char *str = (char *)malloc(4096);
 	Assert(str != (void *)0);
 
 	for (i = 0; (c = fgetc(source)); ++i) {
@@ -450,8 +452,8 @@ ANode *compound_statement(void)
 	ANode *node;
 	ANode *node1;
 	ANode *node2;
-	node1 = (void *)0;
-	node2 = (void *)0;
+	node1 = (ANode *)0;
+	node2 = (ANode *)0;
 	match_and_pop(TK_L_CURLY);
 	if (token == TK_AUTO) {
 		node1 = declaration_list();
@@ -559,14 +561,14 @@ void gen_decl(ANode *node)
 	}
 	switch (node->type) {
 	case AS_DECLARATION_LIST1:
-		gen_decl(*node->Node->data(node->Node, 0));
+		gen_decl((ANode *)*node->Node->data(node->Node, 0));
 		break;
 	case AS_DECLARATION_LIST2:
-		gen_decl(*node->Node->data(node->Node, 0));
-		gen_decl(*node->Node->data(node->Node, 1));
+		gen_decl((ANode *)*node->Node->data(node->Node, 0));
+		gen_decl((ANode *)*node->Node->data(node->Node, 1));
 		break;
 	case AS_DECLARATION:
-		gen_decl(*node->Node->data(node->Node, 0));
+		gen_decl((ANode *)*node->Node->data(node->Node, 0));
 		break;
 	case AS_ID:
 		declare(node);
@@ -585,12 +587,12 @@ void gen_func(ANode *node)
 	}
 	switch (node->type) {
 	case AS_ID:
-		fprintf(dest, ".globl %s\n%s:\n", ((struct local_var *)*g_local_var->data(g_local_var, node->data.u64))->name, ((struct local_var *)*g_local_var->data(g_local_var, node->data.u64))->name);
+		fprintf(dest, ".globl %s\n%s:\n", ((struct idname *)*g_idname->data(g_idname, node->data.u64))->name, ((struct idname *)*g_idname->data(g_idname, node->data.u64))->name);
 		break;
 	case AS_STAT_COMPOUND:
 		fprintf(dest, "\tpushq %%rbp\n"
 				"\tmovq %%rsp, %%rbp\n");
-		gen(node);
+		gen((ANode *)node);
 		fprintf(dest, "\tleave\n"
 			"\tret\n");
 		break;
@@ -610,81 +612,81 @@ void gen(ANode *node)
 		fprintf(dest, "\tmovq $%lu, %%rax\n" , node->data.u64);
 		break;
 	case AS_ADD:
-		gen(*node->Node->data(node->Node, 1));
+		gen((ANode *)*node->Node->data(node->Node, 1));
 		fprintf(dest, "\tpushq %%rax\n");
-		gen(*node->Node->data(node->Node, 0));
+		gen((ANode *)*node->Node->data(node->Node, 0));
 		fprintf(dest, "\taddq (%%rsp), %%rax\n");
 		fprintf(dest, "\tleaq 8(%%rsp), %%rsp\n");
 		break;
 	case AS_SUB:
-		gen(*node->Node->data(node->Node, 1));
+		gen((ANode *)*node->Node->data(node->Node, 1));
 		fprintf(dest, "\tpushq %%rax\n");
-		gen(*node->Node->data(node->Node, 0));
+		gen((ANode *)*node->Node->data(node->Node, 0));
 		fprintf(dest, "\tsubq (%%rsp), %%rax\n");
 		fprintf(dest, "\tleaq 8(%%rsp), %%rsp\n");
 		break;
 	case AS_MUL:
-		gen(*node->Node->data(node->Node, 1));
+		gen((ANode *)*node->Node->data(node->Node, 1));
 		fprintf(dest, "\tpushq %%rax\n");
-		gen(*node->Node->data(node->Node, 0));
+		gen((ANode *)*node->Node->data(node->Node, 0));
 		fprintf(dest, "\timulq (%%rsp), %%rax\n");
 		fprintf(dest, "\tleaq 8(%%rsp), %%rsp\n");
 		break;
 	case AS_DIV:
-		gen(*node->Node->data(node->Node, 1));
+		gen((ANode *)*node->Node->data(node->Node, 1));
 		fprintf(dest, "\tpushq %%rax\n");
-		gen(*node->Node->data(node->Node, 0));
+		gen((ANode *)*node->Node->data(node->Node, 0));
 		fprintf(dest, "\tcqo\n");
 		fprintf(dest, "\tidivq (%%rsp)\n");
 		fprintf(dest, "\tleaq +8(%%rsp), %%rsp\n");
 		break;
 	case AS_NEG:
-		gen(*node->Node->data(node->Node, 0));
+		gen((ANode *)*node->Node->data(node->Node, 0));
 		fprintf(dest, "\tnegq %%rax\n");
 		break;
 	case AS_POS:
-		gen(*node->Node->data(node->Node, 0));
+		gen((ANode *)*node->Node->data(node->Node, 0));
 		break;
 	case AS_STAT_EXPR:
-		gen(*node->Node->data(node->Node, 0));
+		gen((ANode *)*node->Node->data(node->Node, 0));
 		break;
 	case AS_STAT_RETURN:
-		gen(*node->Node->data(node->Node, 0));
+		gen((ANode *)*node->Node->data(node->Node, 0));
 		fprintf(dest, "\tleave\n"
 			"\tret\n");
 		break;
 	case AS_STAT:
-		gen(*node->Node->data(node->Node, 0));
+		gen((ANode *)*node->Node->data(node->Node, 0));
 		break;
 	case AS_STAT_LIST1:
-		gen(*node->Node->data(node->Node, 0));
+		gen((ANode *)*node->Node->data(node->Node, 0));
 		break;
 	case AS_STAT_LIST2:
-		gen(*node->Node->data(node->Node, 0));
-		gen(*node->Node->data(node->Node, 1));
+		gen((ANode *)*node->Node->data(node->Node, 0));
+		gen((ANode *)*node->Node->data(node->Node, 1));
 		break;
 	case AS_ID:
 		fprintf(dest, "\tmovq -%lu(%%rbp), %%rax\n", get_offset(node));
 		break;
 	case AS_ASSIGN:
-		gen_ref(*node->Node->data(node->Node, 0));
+		gen_ref((ANode *)*node->Node->data(node->Node, 0));
 		fprintf(dest, "\tpushq %%rax\n");
-		gen(*node->Node->data(node->Node, 1));
+		gen((ANode *)*node->Node->data(node->Node, 1));
 		fprintf(dest, "\tpopq %%rdi\n"
 				"\tmovq %%rax, (%%rdi)\n");
 		break;
 	case AS_DECLARATION_LIST1:
 	case AS_DECLARATION_LIST2:
-		gen_decl(node);
+		gen_decl((ANode *)node);
 		fprintf(dest, "\tleaq -%lu(%%rsp), %%rsp\n", get_maxoffset());
 		break;
 	case AS_STAT_COMPOUND:
-		gen(*node->Node->data(node->Node, 0));
-		gen(*node->Node->data(node->Node, 1));
+		gen((ANode *)*node->Node->data(node->Node, 0));
+		gen((ANode *)*node->Node->data(node->Node, 1));
 		break;
 	case AS_FUNCTION_DEFI:
-		gen_func(*node->Node->data(node->Node, 0));
-		gen_func(*node->Node->data(node->Node, 1));
+		gen_func((ANode *)*node->Node->data(node->Node, 0));
+		gen_func((ANode *)*node->Node->data(node->Node, 1));
 		break;
 	default:
 		printf("Unknown Ast Node\n");
@@ -695,7 +697,7 @@ void gen(ANode *node)
 void cc(void)
 {
 	ANode *res;
-	g_local_var = coonew(Vector);
+	g_idname = coonew(Vector);
 	variable = coonew(Vector);
 	next();
 	res = function_definition();
