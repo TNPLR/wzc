@@ -17,7 +17,11 @@ enum ast_type {
 	AS_NOP_ADD,
 	AS_NOP_EXPR,
 	AS_STAT_EXPR,
-	AS_STAT_RETURN
+	AS_STAT_RETURN,
+	AS_STAT,
+	AS_STAT_LIST1,
+	AS_STAT_LIST2,
+	AS_ID
 };
 
 typedef struct ast_node ANode;
@@ -27,6 +31,7 @@ struct ast_node {
 	Vector Node;
 	union {
 		unsigned long int u64;
+		void *other;
 	} data;
 };
 ANode *new_anode(enum ast_type, unsigned long int son_count, ...);

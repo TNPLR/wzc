@@ -2,6 +2,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <ctype.h>
 
 #define REV_SEEK(x) fseek(x, -1, SEEK_CUR)
@@ -20,17 +21,95 @@ enum {
 		TK_R_PAR,
 		TK_EOF,
 		TK_ID,
-		TK_SEMI
+		TK_SEMI,
+		TK_AUTO,
+		TK_RETURN
 };
 int token;
 int token_len;
 union {
+	struct local_var *local_id;
 	unsigned long int integer;
 } token_data;
+
+struct local_var {
+	char *name;
+	unsigned long int name_len;
+	unsigned long int number;
+};
+Vector g_local_var;
 
 int getnum(void)
 {
 	return fscanf(source, "%lu", &token_data.integer);
+}
+
+int check_keyword(char *str, unsigned long int len)
+{
+	switch (len) {
+	case 4:
+		if (!memcmp("auto", str, 4)) {
+			token = TK_AUTO;
+			return 1;
+		}
+		break;
+	case 6:
+		if (!memcmp("return", str, 6)) {
+			token = TK_RETURN;
+			return 1;
+		}
+		break;
+	default:
+		break;
+	}
+	return 0;
+}
+
+void check_local(char *str, unsigned long int len)
+{
+	Iterator it;
+	struct local_var *res;
+	token = TK_ID;
+	for (it = g_local_var->rbegin(g_local_var); it->freelt(it, g_local_var->rend(g_local_var)); it->next(it)) {
+		if (((struct local_var *)it->get(it))->name_len != len) {
+			continue;
+		}
+		if (memcmp(((struct local_var *)it->get(it))->name, str, len)) {
+			continue;
+		}
+		token_data.local_id = (struct local_var *)it->get(it);
+		return;
+	}
+	it->free(it);
+	res = malloc(sizeof(struct local_var));
+	res->name = malloc(len + 1);
+	memcpy(res->name, str, len);
+	res->name[len] = 0;
+	res->name_len = len;
+	res->number = g_local_var->size(g_local_var);
+	g_local_var->push_back(g_local_var, res);
+	token_data.local_id = res;
+}
+
+void get_alpha(void)
+{
+	unsigned long int i;
+	int c;
+	char *str = malloc(4096);
+	for (i = 0; (c = fgetc(source)); ++i) {
+		if (isalpha(c) || c == '_') {
+			str[i] = c;
+		} else {
+			break;
+		}
+	}
+	str[i] = 0;
+	REV_SEEK(source);
+	if (check_keyword(str, i)) {
+		return;
+	}
+	check_local(str, i);
+	free(str);
 }
 
 void next(void)
@@ -45,8 +124,8 @@ void next(void)
 			return;
 		}
 		if (isalpha(c) || c == '_') {
-			token = TK_ID;
 			REV_SEEK(source);
+			get_alpha();
 			return;
 		}
 		token_len = 1;
@@ -82,17 +161,58 @@ void next(void)
 void match_and_pop(int c)
 {
 	if (token != c) {
-		printf("Expected %c, but found %c\n", c, token);
+		printf("Expected token %d, but found token %d\n", c, token);
 		exit(1);
 	}
 	next();
 }
+
+/* EBNF of the WZC Language (simplified C)
+ * statement_list:
+ * 	statement
+ *	statement_list statement
+ * statement:
+ *	expression_statement
+ *	return_statement
+ * expression_statement:
+ *	expression? ';'
+ * return_statement
+ *	'return' expression? ';'
+ * expression:
+ *	addicitive
+ *	unary '=' expression
+ * addictive:
+ *	multiplication
+ *	addictive '+' multiplication
+ *	addictive '-' multiplication
+ * multiplication:
+ *	unary
+ *	multiplication '*' unary
+ *	multiplication '/' unary
+ * unary
+ *	primary
+ *	'+' unary
+ *	'-' unary
+ * primary
+ *	identifier
+ *	number
+ *	'(' expression ')'
+ */
 
 ANode *num(void)
 {
 	ANode *node;
 	node = new_anode(AS_NUM, 0);
 	node->data.u64 = token_data.integer;
+	next();
+	return node;
+}
+
+ANode *ident(void)
+{
+	ANode *node;
+	node = new_anode(AS_ID, 0);
+	node->data.u64 = token_data.local_id->number;
 	next();
 	return node;
 }
@@ -109,6 +229,9 @@ ANode *prim(void)
 		break;
 	case TK_NUMBER:
 		node = new_anode(AS_NOP_PRIM, 1, num());
+		break;
+	case TK_ID:
+		node = new_anode(AS_NOP_PRIM, 1, ident());
 		break;
 	default:
 		puts("Primary expression error");
@@ -200,9 +323,46 @@ ANode *expr_stat(void)
 ANode *ret(void)
 {
 	ANode *node;
-	node = new_anode(AS_STAT_RETURN, 1, expr_stat());
+	match_and_pop(TK_RETURN);
+	node = new_anode(AS_STAT_RETURN, 1, expr());
+	match_and_pop(TK_SEMI);
 	return node;
 
+}
+
+ANode *state(void)
+{
+	ANode *node;
+	switch (token) {
+	case TK_RETURN:
+		node = new_anode(AS_STAT, 1, ret());
+		break;
+	case TK_SEMI:
+	default:
+		node = new_anode(AS_STAT, 1, expr_stat());
+		break;
+	}
+	return node;
+}
+
+ANode *state_list_rest(ANode *lop)
+{
+	ANode *node;
+	switch (token) {
+	case TK_EOF:
+		node = new_anode(AS_STAT_LIST1, 1, lop);
+		break;
+	default:
+		node = new_anode(AS_STAT_LIST2, 2, lop, state());
+		node = state_list_rest(node);
+		break;
+	}
+	return node;
+}
+
+ANode *state_list(void)
+{
+	return state_list_rest(state());
 }
 
 void gen(ANode *node)
@@ -273,6 +433,19 @@ void gen(ANode *node)
 		fprintf(dest, "\tpopq %%rbp\n"
 			"\tret\n");
 		break;
+	case AS_STAT:
+		gen(*node->Node->data(node->Node, 0));
+		break;
+	case AS_STAT_LIST1:
+		gen(*node->Node->data(node->Node, 0));
+		break;
+	case AS_STAT_LIST2:
+		gen(*node->Node->data(node->Node, 0));
+		gen(*node->Node->data(node->Node, 1));
+		break;
+	case AS_ID:
+		fprintf(dest, "\tmovq -%lu(%%rbp), %%rax\n", node->data.u64 * 8);
+		break;
 	default:
 		printf("Unknown Ast Node\n");
 		exit(1);
@@ -282,8 +455,9 @@ void gen(ANode *node)
 void cc(void)
 {
 	ANode *res;
+	g_local_var = coonew(Vector);
 	next();
-	res = ret();
+	res = state_list();
 	fprintf(dest, ".text\n"
 		".globl main\n"
 		"main:\n"
