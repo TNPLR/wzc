@@ -21,7 +21,9 @@ enum ast_type {
 	AS_STAT,
 	AS_STAT_LIST1,
 	AS_STAT_LIST2,
-	AS_ID
+	AS_ID,
+	AS_ASSIGN,
+	AS_NOP_ASSIGN
 };
 
 typedef struct ast_node ANode;

@@ -17,13 +17,14 @@ enum {
 		TK_DIV,
 		TK_ADD,
 		TK_MINUS,
-/*  5  */	TK_L_PAR,
+/*  5 */	TK_L_PAR,
 		TK_R_PAR,
 		TK_EOF,
 		TK_ID,
 		TK_SEMI,
-		TK_AUTO,
-		TK_RETURN
+/* 10 */	TK_AUTO,
+		TK_RETURN,
+		TK_ASSIGN
 };
 int token;
 int token_len;
@@ -150,6 +151,9 @@ void next(void)
 			return;
 		case ';':
 			token = TK_SEMI;
+			return;
+		case '=':
+			token = TK_ASSIGN;
 			return;
 		case -1:
 			token = TK_EOF;
@@ -307,11 +311,26 @@ ANode *add(void)
 {
 	return add_rest(mul());
 }
-ANode *expr(void)
+
+ANode *expr_rest(ANode *lop)
 {
 	ANode *node;
-	node = new_anode(AS_NOP_EXPR, 1, add());
+	switch (token) {
+	case TK_ASSIGN:
+		next();
+		node = new_anode(AS_ASSIGN, 2, lop, add());
+		node = expr_rest(node);
+		break;
+	default:
+		node = new_anode(AS_NOP_ASSIGN, 1, lop);
+		break;
+	}
 	return node;
+}
+
+ANode *expr(void)
+{
+	return expr_rest(add());
 }
 ANode *expr_stat(void)
 {
